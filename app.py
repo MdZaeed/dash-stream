@@ -166,33 +166,67 @@ def submit_query(content):
 #     combined_query += "\nThis code ran on an NVIDIA H100 machine. Can you optimize this code based on the insights provided for better runtime? Do not add any explanantion just give me the optimized code only?"
 #     return combined_query
 
+# def prepare_sources_to_submit(content, pc_data=None, important_counters=None, filtered_roofline_data=None):
+#     combined_query = f"Given the code:\n\n{content}\n"
+#     if pc_data is not None:
+#         combined_query += "\nand the following PC sampling data insights:\n"
+#         large_stalls = find_large_stalls(pc_data, threshold=0.1)
+#         for stall in large_stalls:
+#             combined_query += f"Line {stall['Line No']} has high stalls due to: {', '.join(stall['Stall Reasons'])}.\n"
+#     if important_counters is not None:
+#         combined_query += "\nI have also found the main hardware performance events that cause this code to use more runtime are\n"
+#         for counter in important_counters:
+#             combined_query += f"Kernel: {counter['Kernel']}, Group: {counter['Group Name']}, Counter: {counter['Counter Name']}, Value: {counter['Value']}, Description: {counter['Description']}\n"
+#         combined_query+="The higher the attached value is the more effect it has on runtime.\n"
+#     if filtered_roofline_data is not None:
+#         for key, value in filtered_roofline_data.items():
+#             comms = ''
+#             for x in range(len(value)):
+#                 comms += str(x+1) + '. ' + value[x] + "\n"
+#             combined_query += f"\nAdditionally, the Roofline comment for {key} kernel were : {comms}\n"
+#         # combined_query += f"\nAdditionally, the following Roofline analysis data was collected:{filtered_roofline_data}\n"
+#         # for index, row in filtered_roofline_data.iterrows():
+#         #     combined_query += ''
+#     combined_query += "\nThis code ran on an NVIDIA H100 machine. Can you optimize this code based on the insights provided for better runtime and give me a complete code to replace?\n"
+#     combined_query += "\nAfter the optimized code, explain why you suggested each optimization in terms of the data that I provided. Be concise, to the point, matter of fact, and substantiate every decision using data or references."
+#     return combined_query
+
+
 def prepare_sources_to_submit(content, pc_data=None, important_counters=None, filtered_roofline_data=None):
-    combined_query = f"Given the code:\n\n{content}\n"
+    combined_query = f"***Code:***\n\n{content}\n"
     if pc_data is not None:
-        combined_query += "\nand the following PC sampling data insights:\n"
+        combined_query += "\nSTALL ANALYSIS:\n"
         large_stalls = find_large_stalls(pc_data, threshold=0.1)
         for stall in large_stalls:
             combined_query += f"Line {stall['Line No']} has high stalls due to: {', '.join(stall['Stall Reasons'])}.\n"
     if important_counters is not None:
-        combined_query += "\nI have also found the main hardware performance events that cause this code to use more runtime are\n"
+        new_query = 'can you expand on the following'
+        # new_query += "\nROOFLINE ANALYSIS\n"
         for counter in important_counters:
-            combined_query += f"Kernel: {counter['Kernel']}, Group: {counter['Group Name']}, Counter: {counter['Counter Name']}, Value: {counter['Value']}\n"
-        combined_query+="The higher the attached value is the more effect it has on runtime.\n"
+            new_query += f"Kernel: {counter['Kernel']}, Group: {counter['Group Name']}, Counter: {counter['Counter Name']}, Value: {counter['Value']}, Description: {counter['Description']}\n"
+        new_query+="into a block that reads as a performance expert’s optinion of what is wrong with the performance of this code so that it can inform an LLM like yourself how to optimize the code’s performance? Be mindful of the number of tokens, we want to be succinct so that we can use the least amount of tokens to pack a punch."
+        combined_query += submit_query(new_query)
     if filtered_roofline_data is not None:
         for key, value in filtered_roofline_data.items():
             comms = ''
             for x in range(len(value)):
                 comms += str(x+1) + '. ' + value[x] + "\n"
-            combined_query += f"\nAdditionally, the Roofline comment for {key} kernel were : {comms}\n"
+            combined_query += f"\nROOFLINE ANALYSIS for {key} kernel were : {comms}\n"
         # combined_query += f"\nAdditionally, the following Roofline analysis data was collected:{filtered_roofline_data}\n"
         # for index, row in filtered_roofline_data.iterrows():
         #     combined_query += ''
-    combined_query += "\nThis code ran on an NVIDIA H100 machine. Can you optimize this code based on the insights provided for better runtime and give me a complete code to replace?\n"
-    combined_query += "\nAfter the optimized code, explain why you suggested each optimization in terms of the data that I provided. Be concise, to the point, matter of fact, and substantiate every decision using data or references."
+    # combined_query += "\nThis code ran on an NVIDIA H100 machine. Can you optimize this code based on the insights provided for better runtime and give me a complete code to replace?\n"
+    # combined_query += "\nAfter the optimized code, explain why you suggested each optimization in terms of the data that I provided. Be concise, to the point, matter of fact, and substantiate every decision using data or references."
+    combined_query += "\nPlease optimize the code based on the above analysis, and explain your changes.\n"
     return combined_query
+
 
 def extract_important_counters(json_data, threshold=0.1):
     """Extract important counters and their group names based on their values."""
+    with open("gpu_counters_description.json") as f:
+        counter_descriptions = json.load(f)
+
+    # print(counter_descriptions["sm__inst_executed.avg.per_cycle_active"])
     important_counters = []
     for kernel, groups in json_data.items():
         for group_name, counters in groups.items():
@@ -202,9 +236,12 @@ def extract_important_counters(json_data, threshold=0.1):
                         "Kernel": kernel,
                         "Group Name": group_name,
                         "Counter Name": counter_name,
-                        "Value": value
+                        "Value": value,
+                        "Description": counter_descriptions[counter_name] if counter_name in counter_descriptions else "None"
                     })
     return important_counters
+
+
 
 def main():
     st.set_page_config(layout="wide")
